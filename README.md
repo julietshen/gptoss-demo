@@ -18,6 +18,10 @@ This demo application uses **GPT-OSS** running locally via **Ollama** to moderat
 - **Draft responses** for borderline cases requiring human review
 - **Batch processing** capabilities for testing multiple posts
 
+<img width="1498" height="733" alt="Screenshot 2025-08-07 at 5 44 10 PM" src="https://github.com/user-attachments/assets/689641cc-bf8b-424e-aab8-e7215547d2a0" />
+<img width="1133" height="694" alt="Screenshot 2025-08-07 at 5 46 16 PM" src="https://github.com/user-attachments/assets/ea4bf6af-5639-4d74-9254-635f4decbe22" />
+
+
 ## Features
 
 ### Functionality
