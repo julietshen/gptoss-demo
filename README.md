@@ -53,8 +53,8 @@ Tested on: 32GB 2021 MacBook Pro (M1 Max)
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/trust-safety-demo.git
-cd trust-safety-demo
+git clone https://github.com/julietshen/gptoss-demo.git
+cd gptoss-demo
 ```
 
 ### 2. Install Python Dependencies
