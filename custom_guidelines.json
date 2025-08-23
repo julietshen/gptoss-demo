@@ -1,0 +1,220 @@
+{
+  "default": {
+    "name": "Anti-Misogyny & Anti-Transphobia",
+    "description": "Specialized guidelines for detecting misogynistic and transphobic content",
+    "categories": [
+      {
+        "name": "Misogyny - Explicit",
+        "description": "Direct slurs, statements of female inferiority, calls for violence against women",
+        "examples": [
+          "Direct slurs targeting women (b*tch, c*nt, wh*re used as attacks)",
+          "Explicit statements that women are inferior or should be subordinated",
+          "Calls for violence against women or feminine individuals"
+        ]
+      },
+      {
+        "name": "Misogyny - Subtle",
+        "description": "Dismissive language, capability generalizations, victim-blaming",
+        "examples": [
+          "Generalizations about women's capabilities (\"women can't drive/do math\")",
+          "Dismissive language about women's concerns (\"Karen,\" \"emotional,\" \"hysterical\")",
+          "Objectifying comments focusing solely on physical appearance in professional contexts"
+        ]
+      },
+      {
+        "name": "Misogyny - Harassment",
+        "description": "Targeted gendered attacks, coordinated harassment, threats of sexual violence",
+        "examples": [
+          "Coordinated attacks on women's accounts",
+          "Gendered insults in response to women's opinions",
+          "Threats of sexual violence"
+        ]
+      },
+      {
+        "name": "Transphobia - Explicit",
+        "description": "Deliberate misgendering, slurs, denying trans existence, calls for violence",
+        "examples": [
+          "Deliberate misgendering with hostile intent",
+          "Slurs targeting transgender individuals (tr*nny, etc.)",
+          "Statements denying the existence or validity of transgender people"
+        ]
+      },
+      {
+        "name": "Transphobia - Subtle",
+        "description": "\"Biological sex\" exclusion arguments, \"real women/men\" language, bathroom/sports fearmongering",
+        "examples": [
+          "\"Biological sex\" arguments used to exclude trans people",
+          "Concern trolling about \"protecting children\" from trans people",
+          "References to \"real women/men\" that exclude trans people"
+        ]
+      },
+      {
+        "name": "Transphobia - Deadnaming",
+        "description": "Using former names/identities of trans people",
+        "examples": [
+          "Using a trans person's birth name after being corrected",
+          "Sharing previous names/identities of trans individuals",
+          "Historical references designed to invalidate current identity"
+        ]
+      },
+      {
+        "name": "Transphobia - Medicalization",
+        "description": "Calling being trans a \"mental illness\", unsolicited medical advice, detransition promotion",
+        "examples": [
+          "Referring to being transgender as a \"mental illness\" or \"disorder\"",
+          "Unsolicited medical advice or demands for medical information",
+          "Discussions of \"detransition\" intended to discourage transition"
+        ]
+      }
+    ],
+    "decision_principles": [
+      "Focus on impact over intent",
+      "Consider intersectionality (racism + misogyny, etc.)",
+      "Distinguish education from perpetuation",
+      "Account for reclaimed language by affected communities"
+    ],
+    "draft_response_template": "pls dont post this tyvm",
+    "created_at": "2025-08-22T19:46:46.277226",
+    "last_modified": "2025-08-22T19:46:46.277233",
+    "active": false,
+    "custom_prompt": null
+  },
+  "Anti-Harassment": {
+    "name": "Anti-Harassment",
+    "description": "Focus on harassment and bullying",
+    "categories": [
+      {
+        "name": "Personal attacks",
+        "description": "Content related to personal attacks",
+        "examples": [
+          "Examples of personal attacks"
+        ]
+      },
+      {
+        "name": "Bullying behavior",
+        "description": "Content related to bullying behavior",
+        "examples": [
+          "Examples of bullying behavior"
+        ]
+      },
+      {
+        "name": "Doxxing/Privacy violations",
+        "description": "Content related to doxxing/privacy violations",
+        "examples": [
+          "Examples of doxxing/privacy violations"
+        ]
+      }
+    ],
+    "decision_principles": [
+      "Protect vulnerable users",
+      "Context and intent matter",
+      "Escalate borderline cases"
+    ],
+    "draft_response_template": "Please review our community guidelines",
+    "created_at": "2025-08-22T19:49:41.095546",
+    "last_modified": "2025-08-22T19:49:41.095550",
+    "active": false,
+    "custom_prompt": null
+  },
+  "Livestreaming": {
+    "name": "Livestreaming",
+    "description": "Custom prompt-based guidelines",
+    "categories": [
+      {
+        "name": "Custom Prompt",
+        "description": "Uses custom moderation prompt",
+        "examples": [
+          "Defined by custom prompt"
+        ]
+      }
+    ],
+    "decision_principles": [
+      "Custom prompt logic"
+    ],
+    "draft_response_template": "Please review our guidelines",
+    "created_at": "2025-08-22T20:14:06.679157",
+    "last_modified": "2025-08-22T20:14:06.679164",
+    "active": true,
+    "custom_prompt": "\\#\\#\\# Task: Classify livestream chat messages for real-time moderation\n\n\\#\\#\\# Chat Message:  \n\"{message\\_text}\"\n\n\\#\\#\\# Classification:  \n\\- SAFE: Appropriate chat message  \n\\- SPAM: Repetitive/promotional content  \n\\- HARASSMENT: Personal attacks or bullying  \n\\- HATE\\_SPEECH: Discriminatory language  \n\\- SEXUAL: Inappropriate sexual content  \n\\- DOXXING: Sharing personal information\n\n\\#\\#\\# Response Format:  \nClassification: \\[CATEGORY\\]  \nAction: \\[ALLOW/WARN/DELETE/TIMEOUT/BAN\\]  \nConfidence: \\[0.0-1.0\\]  \nReasoning: \\[Brief explanation\\]\n\n\\#\\#\\# Examples:\n\n\\*\\*Input:\\*\\* \"Great stream\\! Love this content \ud83d\udc96\"  \n\\*\\*Output:\\*\\*  \nClassification: SAFE  \nAction: ALLOW  \nConfidence: 0.95  \nReasoning: Positive, supportive comment with appropriate emoji\n\n\\*\\*Input:\\*\\* \"Follow my channel\\!\\!\\! Best content ever\\!\\!\\! Link in bio\\!\\!\\!\"  \n\\*\\*Output:\\*\\*  \nClassification: SPAM  \nAction: DELETE  \nConfidence: 0.9  \nReasoning: Excessive punctuation, self-promotion, promotional language\n\n\\*\\*Input:\\*\\* \"You're ugly and should quit streaming\"  \n\\*\\*Output:\\*\\*  \nClassification: HARASSMENT  \nAction: TIMEOUT  \nConfidence: 0.95  \nReasoning: Direct personal attack intended to hurt the streamer\n\n\\*\\*Input:\\*\\* \"What's your real name and address? \ud83d\udc40\"  \n\\*\\*Output:\\*\\*  \nClassification: DOXXING  \nAction: BAN  \nConfidence: 0.8  \nReasoning: Attempting to solicit private personal information"
+  },
+  "Test Custom Prompt": {
+    "name": "Test Custom Prompt",
+    "description": "Custom prompt-based guidelines",
+    "categories": [
+      {
+        "name": "Custom Prompt",
+        "description": "Uses custom moderation prompt",
+        "examples": [
+          "Defined by custom prompt"
+        ]
+      }
+    ],
+    "decision_principles": [
+      "Custom prompt logic"
+    ],
+    "draft_response_template": "Please review our guidelines",
+    "created_at": "2025-08-22T20:07:15.007680",
+    "last_modified": "2025-08-22T20:07:15.007681",
+    "active": false,
+    "custom_prompt": null
+  },
+  "Test Prompt": {
+    "name": "Test Prompt",
+    "description": "Test",
+    "categories": [
+      {
+        "name": "Test",
+        "description": "Test",
+        "examples": []
+      }
+    ],
+    "decision_principles": [
+      "Test"
+    ],
+    "draft_response_template": "Test",
+    "created_at": "2025-08-22T20:07:15.008250",
+    "last_modified": "2025-08-22T20:07:15.008251",
+    "active": false,
+    "custom_prompt": null
+  },
+  "Livestream": {
+    "name": "Livestream",
+    "description": "Custom prompt-based guidelines",
+    "categories": [
+      {
+        "name": "Custom Prompt",
+        "description": "Uses custom moderation prompt",
+        "examples": [
+          "Defined by custom prompt"
+        ]
+      }
+    ],
+    "decision_principles": [
+      "Custom prompt logic"
+    ],
+    "draft_response_template": "Please review our guidelines",
+    "created_at": "2025-08-22T20:07:30.473544",
+    "last_modified": "2025-08-22T20:07:30.473552",
+    "active": false,
+    "custom_prompt": null
+  },
+  "Test": {
+    "name": "Test",
+    "description": "Test desc",
+    "categories": [
+      {
+        "name": "test",
+        "description": "test",
+        "examples": []
+      }
+    ],
+    "decision_principles": [
+      "test"
+    ],
+    "draft_response_template": "test",
+    "created_at": "2025-08-22T20:10:22.086857",
+    "last_modified": "2025-08-22T20:10:22.086857",
+    "active": false,
+    "custom_prompt": "Custom test prompt: {POST_TEXT}"
+  }
+}

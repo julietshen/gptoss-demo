@@ -18,6 +18,7 @@ from jetstream_client import JetstreamClient, create_post_stream_client, filter_
 from at_labeler import ATLabelerClient, AgenticModerator, create_demo_labeler
 from label_config import LabelConfig, AgenticPolicy
 from feedback_system import FeedbackSystem, FeedbackType, FeedbackAnalyzer
+from guidelines_manager import GuidelinesManager, GuidelineSet
 
 # Configure logging
 logging.basicConfig(
@@ -38,22 +39,24 @@ DATASET_NAME = "withalim/bluesky-posts"
 # Sample posts removed per user request - using only HuggingFace dataset or live Jetstream data
 SAMPLE_POSTS = []
 
-def build_prompt(post_text: str) -> str:
+def build_prompt(post_text: str, guidelines_manager: GuidelinesManager = None, custom_guidelines: str = None) -> str:
     """
     Build the moderation prompt for GPT-OSS.
     
     Args:
         post_text: The user-generated content to moderate
+        guidelines_manager: Optional guidelines manager for custom guidelines
     
     Returns:
         Formatted prompt string for the model
     """
-    prompt = f"""You are a specialized trust & safety moderation assistant focusing on anti-misogyny and anti-transphobia content moderation. Your job is to review a user-generated post and identify:
-
-1. Whether it contains misogynistic or transphobic content or other policy violations
-2. The specific type of violation if present
-3. Your reasoning for the decision
-4. Whether human review is needed for borderline cases
+    # Use custom guidelines if available, otherwise use default
+    if guidelines_manager:
+        guidelines_section = guidelines_manager.generate_prompt_section()
+        draft_response = guidelines_manager.get_draft_response_template()
+    else:
+        # Fallback to default guidelines
+        guidelines_section = """**Moderation Guidelines: Anti-Misogyny & Anti-Transphobia**
 
 **Key Categories to Detect:**
 
@@ -68,21 +71,41 @@ def build_prompt(post_text: str) -> str:
 - Deadnaming: Using former names/identities of trans people
 - Medicalization: Calling being trans a "mental illness", unsolicited medical advice, detransition promotion
 
-**Other:** Spam, general harassment, threats, privacy violations
-
 **Decision Principles:**
 - Focus on impact over intent
 - Consider intersectionality (racism + misogyny, etc.)
 - Distinguish education from perpetuation
-- Account for reclaimed language by affected communities
+- Account for reclaimed language by affected communities"""
+        draft_response = "pls dont post this tyvm"
+    
+    # Add custom guidelines if provided
+    if custom_guidelines and custom_guidelines.strip():
+        guidelines_section += f"""
 
-Return your result in this exact format:
+**Additional Custom Guidelines:**
+{custom_guidelines.strip()}"""
+    
+    prompt = f"""You are a specialized trust & safety moderation assistant. ANALYZE THE FOLLOWING POST NOW and provide your moderation decision:
+
+TASK: Review this user-generated post and determine if it violates community guidelines.
+
+INSTRUCTIONS:
+1. Analyze the content for policy violations based on the guidelines below
+2. Identify the specific type of violation if present
+3. Provide your reasoning for the decision
+4. If the post is not in English, first translate it to English and include the translation in your rationale
+
+{guidelines_section}
+
+RESPOND IMMEDIATELY in this exact format (do not ask for more information):
 Classification: [Allowed / Flagged / Needs Human Review]
 Violation Type: [Specific violation type or N/A]
-Rationale: [Detailed explanation of decision]
-Draft Response: [If content violates policy, respond with "pls dont post this tyvm", otherwise N/A]
+Rationale: [If non-English: "Translation: [English translation]" then your detailed explanation of decision]
+Draft Response: [If content violates policy, respond with "{draft_response}", otherwise N/A]
 
-Post: \"\"\"{post_text}\"\"\"
+POST TO ANALYZE: \"\"\"{post_text}\"\"\"
+
+PROVIDE YOUR MODERATION DECISION NOW:
 """
     return prompt
 
@@ -114,8 +137,16 @@ def parse_model_response(response_text: str) -> Dict[str, str]:
                 result["rationale"] = line.replace("Rationale:", "").strip()
             elif line.startswith("Draft Response:"):
                 result["draft_response"] = line.replace("Draft Response:", "").strip()
+        
+        # Log the raw response for debugging if parsing fails
+        if result["classification"] == "Unknown":
+            logger.warning(f"Failed to parse model response. Raw response: {response_text[:200]}...")
+            # If we can't parse the structured format, use the raw response as rationale
+            result["rationale"] = f"Raw response: {response_text[:500]}..."
+            
     except Exception as e:
         logger.error(f"Error parsing model response: {e}")
+        result["rationale"] = f"Parse error: {str(e)} | Raw: {response_text[:200]}..."
     
     return result
 
@@ -158,7 +189,55 @@ def moderate_post(text: str, post_uri: str = None) -> Dict[str, str]:
             "draft_response": "N/A"
         }
     
-    prompt = build_prompt(text)
+    # Get policy information from session state (safely)
+    try:
+        if 'st' in globals() and hasattr(st, 'session_state'):
+            policy_type = st.session_state.get("active_policy_type", "default")
+            custom_policy = st.session_state.get("custom_policy_text", "")
+            custom_guidelines = st.session_state.get("custom_guidelines_text", "")
+        else:
+            policy_type = "default"
+            custom_policy = ""
+            custom_guidelines = ""
+    except Exception:
+        # Fallback if session state access fails
+        policy_type = "default"
+        custom_policy = ""
+        custom_guidelines = ""
+    
+    # Build prompt based on active policy type
+    if policy_type == "custom_policy" and custom_policy.strip():
+        # Use completely custom policy
+        prompt = f"""You are a specialized trust & safety moderation assistant. ANALYZE THE FOLLOWING POST NOW and provide your moderation decision:
+
+TASK: Review this user-generated post and determine if it violates community guidelines.
+
+INSTRUCTIONS:
+1. Analyze the content for policy violations based on the guidelines below
+2. Identify the specific type of violation if present
+3. Provide your reasoning for the decision
+4. If the post is not in English, first translate it to English and include the translation in your rationale
+
+{custom_policy}
+
+RESPOND IMMEDIATELY in this exact format (do not ask for more information):
+Classification: [Allowed / Flagged / Needs Human Review]
+Violation Type: [Specific violation type or N/A]
+Rationale: [If non-English: "Translation: [English translation]" then your detailed explanation of decision]
+Draft Response: [If content violates policy, respond with "pls dont post this tyvm", otherwise N/A]
+
+POST TO ANALYZE: \"\"\"{text}\"\"\"
+
+PROVIDE YOUR MODERATION DECISION NOW:
+"""
+        logger.info("Using custom policy")
+    else:
+        # Use default policy with optional additional guidelines
+        prompt = build_prompt(text, None, custom_guidelines if policy_type == "add_guidelines" else "")
+        if policy_type == "add_guidelines" and custom_guidelines.strip():
+            logger.info("Using default prompt with custom guidelines")
+        else:
+            logger.info("Using default prompt")
     
     try:
         logger.info(f"Moderating post: {text[:50]}...")
@@ -200,7 +279,10 @@ def moderate_post(text: str, post_uri: str = None) -> Dict[str, str]:
             response_data = response.json()
             model_output = response_data.get("response", "")
             logger.info("Successfully received moderation response")
-            return parse_model_response(model_output)
+            logger.info(f"Model response preview: {model_output[:200]}...")
+            parsed_result = parse_model_response(model_output)
+            logger.info(f"Parsed classification: {parsed_result.get('classification')}")
+            return parsed_result
         elif response.status_code == 404:
             # Log more details about the 404
             logger.error(f"404 Error. Response: {response.text}")
@@ -657,7 +739,7 @@ def main():
     
     # Header
     st.title("🛡️ ATProto NYC Hack Day Demo")
-    st.markdown("*Agentic anti-misogyny & anti-transphobia moderation using GPT-OSS with live AT Protocol data*")
+    st.markdown("*Generalizable classification using GPT-OSS with live AT Protocol data*")
     
     # Sidebar with instructions
     with st.sidebar:
@@ -704,291 +786,421 @@ def main():
             st.info("Start Ollama first!")
     
     # Main content area
-    col1, col2 = st.columns([2, 1])
+    # Add guidelines management tab
+    tab1, tab2 = st.tabs(["🛡️ Moderation", "⚙️ Policy Settings"])
     
-    with col1:
-        st.header("📝 Content Input")
+    with tab2:
+        st.header("⚙️ Policy Settings")
+        st.markdown("Choose or create your moderation policy")
         
-        # Text input
-        user_input = st.text_area(
-            "Enter content to moderate:",
-            height=150,
-            placeholder="Type or paste user-generated content here..."
+        # Policy note
+        st.info("📢 **Note:** All policies allow promotion of other channels, sites, and self-promotion. Only malicious links and scams are flagged.")
+        
+        # Initialize policy state
+        if "active_policy_type" not in st.session_state:
+            st.session_state.active_policy_type = "default"
+        if "custom_policies" not in st.session_state:
+            st.session_state.custom_policies = {}
+        if "custom_guidelines_text" not in st.session_state:
+            st.session_state.custom_guidelines_text = ""
+        
+        # Policy Type Selection
+        st.subheader("📋 Policy Type")
+        
+        policy_type = st.selectbox(
+            "Choose your moderation approach:",
+            options=["default", "custom_policy", "add_guidelines"],
+            format_func=lambda x: {
+                "default": "Default - Anti-Misogyny & Anti-Transphobia",
+                "custom_policy": "Custom Policy - Replace with your own guidelines",
+                "add_guidelines": "Enhanced Default - Add custom guidelines to default policy"
+            }[x],
+            index=["default", "custom_policy", "add_guidelines"].index(st.session_state.active_policy_type) if st.session_state.active_policy_type in ["default", "custom_policy", "add_guidelines"] else 0
         )
         
-        # Buttons
-        button_col1, button_col2, button_col3 = st.columns(3)
+        if policy_type == "custom_policy":
+            # Custom Policy Creation
+            st.subheader("📝 Create Custom Policy")
+            st.markdown("Paste your complete moderation policy. This will replace the default guidelines entirely.")
+            
+            # Policy templates
+            with st.expander("📋 Policy Templates (Click to use)"):
+                if st.button("🎮 Livestream Chat Abuse"):
+                    template = """**Livestream Chat Moderation Policy**
+
+Flag messages containing:
+
+**Spam & Disruption:**
+- Repeated identical or similar messages
+- Excessive use of emotes or symbols
+- Attempts to disrupt chat flow or derail conversation
+
+**Harassment & Toxicity:**
+- Personal attacks against streamers or viewers
+- Targeted harassment or bullying
+- Doxxing attempts or sharing personal information
+
+**Inappropriate Content:**
+- Sexual harassment or inappropriate advances
+- Hate speech targeting individuals or groups
+- Threats or incitement to violence
+
+**Platform Violations:**
+- Scam links or suspicious URLs
+- Impersonation of streamers or moderators
+- Malicious or harmful content
+
+**Backseat Gaming & Spoilers:**
+- Unwanted gameplay advice when prohibited
+- Spoilers for games, movies, or shows
+- Excessive criticism of gameplay choices"""
+                    st.session_state.custom_policy_text = template
+                    st.rerun()
+                
+                if st.button("💼 Professional Community"):
+                    template = """**Professional Community Moderation Policy**
+
+Flag content containing:
+
+**Unprofessional Conduct:**
+- Personal attacks or hostile behavior
+- Inappropriate language or content
+- Off-topic discussions unrelated to professional matters
+
+**Spam & Repetitive Content:**
+- Repetitive identical or similar posts
+- Irrelevant posts unrelated to community purpose
+- Excessive posting that disrupts normal discussion
+
+**Misinformation & Harmful Advice:**
+- False or misleading professional advice
+- Unsubstantiated claims about companies or individuals
+- Sharing of confidential or proprietary information
+
+**Discrimination & Harassment:**
+- Discriminatory language or behavior
+- Harassment based on protected characteristics
+- Creating hostile work environment discussions"""
+                    st.session_state.custom_policy_text = template
+                    st.rerun()
+            
+            # Custom policy text area
+            if "custom_policy_text" not in st.session_state:
+                st.session_state.custom_policy_text = ""
+            
+            custom_policy = st.text_area(
+                "Paste or write your custom moderation policy:",
+                value=st.session_state.custom_policy_text,
+                height=300,
+                placeholder="Paste your complete moderation guidelines here...\n\nExample:\n**My Custom Policy**\n\nFlag content containing:\n- Specific rule 1\n- Specific rule 2\n- etc.",
+                help="This will completely replace the default guidelines. Make sure to include all the rules you want enforced."
+            )
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("💾 Save Custom Policy", type="primary"):
+                    st.session_state.custom_policy_text = custom_policy
+                    st.session_state.active_policy_type = "custom_policy"
+                    st.success("✅ Custom policy activated!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔄 Back to Default"):
+                    st.session_state.active_policy_type = "default"
+                    st.success("✅ Switched back to default policy!")
+                    st.rerun()
         
-        with button_col1:
-            analyze_button = st.button("🔍 Analyze Post", type="primary", use_container_width=True)
+        elif policy_type == "add_guidelines":
+            # Add to default guidelines
+            st.subheader("📝 Add Custom Guidelines")
+            st.markdown("Add specific guidelines to supplement the default policy")
+            
+            custom_guidelines = st.text_area(
+                "Additional guidelines to include:",
+                value=st.session_state.custom_guidelines_text,
+                height=150,
+                placeholder="e.g., Flag posts about political campaigns during election season\nFlag posts containing investment advice\nFlag posts with malicious links or scams",
+                help="These guidelines will be added to the default moderation policy."
+            )
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                if st.button("💾 Save Guidelines", type="primary"):
+                    st.session_state.custom_guidelines_text = custom_guidelines
+                    st.session_state.active_policy_type = "add_guidelines"
+                    st.success("✅ Custom guidelines saved!")
+                    st.rerun()
+            
+            with col2:
+                if st.button("🔄 Back to Default"):
+                    st.session_state.active_policy_type = "default"
+                    st.success("✅ Switched back to default policy!")
+                    st.rerun()
         
-        with button_col2:
-            demo_button = st.button("🎲 Run Demo (10 posts)", use_container_width=True)
+        else:
+            # Default policy selected
+            if st.session_state.active_policy_type != "default":
+                st.session_state.active_policy_type = "default"
+                st.rerun()
         
-        with button_col3:
-            clear_button = st.button("🗑️ Clear", use_container_width=True)
-        
-        # Jetstream data buttons  
-        live_col1, live_col2, live_col3 = st.columns(3)
-        
-        with live_col1:
-            live_stream_button = st.button("🔴 Start Jetstream", use_container_width=True)
-        
-        with live_col2:
-            live_demo_button = st.button("📡 Moderate Live Posts", use_container_width=True)
-        
-        with live_col3:
-            stop_stream_button = st.button("⏹️ Stop Jetstream", use_container_width=True)
-        
-        # Add debug button
-        debug_button = st.button("🔧 Debug Connection", use_container_width=True)
+        # Show current policy status
+        st.divider()
+        if st.session_state.active_policy_type == "custom_policy" and st.session_state.get("custom_policy_text", "").strip():
+            st.info("**Active Policy:** Custom Policy")
+            with st.expander("View Custom Policy"):
+                st.write(st.session_state.custom_policy_text)
+        elif st.session_state.active_policy_type == "add_guidelines" and st.session_state.custom_guidelines_text.strip():
+            st.info("**Active Policy:** Default + Custom Guidelines")
+            with st.expander("View Custom Guidelines"):
+                st.write(st.session_state.custom_guidelines_text)
+        else:
+            st.info("**Active Policy:** Default - Anti-Misogyny & Anti-Transphobia")
     
-    with col2:
-        st.header("📊 Quick Stats")
+    with tab1:
+        # Add Quick Stats at the top in a compact horizontal layout
+        # Initialize stats if not exists
         if "total_moderated" not in st.session_state:
             st.session_state.total_moderated = 0
             st.session_state.allowed_count = 0
             st.session_state.flagged_count = 0
             st.session_state.review_count = 0
         
-        metric_col1, metric_col2 = st.columns(2)
-        with metric_col1:
-            st.metric("Total Moderated", st.session_state.total_moderated)
-            st.metric("Allowed", st.session_state.allowed_count)
-        with metric_col2:
-            st.metric("Flagged", st.session_state.flagged_count)
-            st.metric("Needs Review", st.session_state.review_count)
+        # Compact stats in one line
+        st.markdown("**📊 Stats:** " + 
+                   f"Total: {st.session_state.total_moderated} | " +
+                   f"✅ {st.session_state.allowed_count} | " + 
+                   f"🚫 {st.session_state.flagged_count} | " +
+                   f"⚠️ {st.session_state.review_count}")
         
-        # Jetstream status
-        st.divider()
-        st.subheader("📡 Jetstream")
+        st.markdown("---")
         
-        # Initialize Jetstream state
-        initialize_jetstream_state()
+        # Main content layout
+        col1, col2 = st.columns([2, 1])
         
-        # Initialize agentic labeler
-        if "agentic_labeler" not in st.session_state:
-            st.session_state.agentic_labeler = create_demo_labeler(dry_run=True)
-            st.session_state.agentic_moderator = AgenticModerator(st.session_state.agentic_labeler)
-            st.session_state.agentic_enabled = False
-        
-        # Initialize feedback system
-        if "feedback_system" not in st.session_state:
-            st.session_state.feedback_system = FeedbackSystem()
-            st.session_state.feedback_analyzer = FeedbackAnalyzer(st.session_state.feedback_system)
-        
-        # Display connection status with more detail
-        is_connected = st.session_state.get("jetstream_connected", False)
-        has_client = st.session_state.get("jetstream_client") is not None
-        
-        if is_connected and has_client:
-            st.success("🟢 Connected to Jetstream")
-            st.caption("Receiving live AT Protocol posts")
-        elif has_client and not is_connected:
-            st.warning("🟡 Jetstream client running but not connected")
-            st.caption("Client exists but connection lost")
-        else:
-            st.error("🔴 Not connected to Jetstream")
-            st.caption("Click 'Start Jetstream' to begin streaming")
-        
-        # Display live post metrics
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.metric("Live Posts Received", st.session_state.get("total_live_posts", 0))
-        with col_m2:
-            queue_size = st.session_state.jetstream_queue.qsize() if "jetstream_queue" in st.session_state else 0
-            st.metric("Queue Size", queue_size)
-        
-        # Agentic labeling controls
-        st.divider()
-        st.subheader("🤖 Agentic Labeling")
-        
-        agentic_enabled = st.checkbox(
-            "Enable Automatic Label Assignment", 
-            value=st.session_state.get("agentic_enabled", False),
-            help="When enabled, AI will automatically assign labels to flagged content"
-        )
-        st.session_state.agentic_enabled = agentic_enabled
-        
-        if agentic_enabled:
-            st.success("🤖 Agentic labeling ENABLED")
-        else:
-            st.info("🤖 Agentic labeling disabled")
-        
-        # Display labeler stats
-        if "agentic_labeler" in st.session_state:
-            stats = st.session_state.agentic_labeler.get_stats()
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.metric("Labels Assigned", stats.get("labels_assigned", 0))
-            with col_b:
-                st.metric("Pending Review", stats.get("labels_queued_for_review", 0))
-        
-        # Feedback system stats
-        st.divider()
-        st.subheader("📝 Feedback System")
-        
-        if "feedback_system" in st.session_state:
-            feedback_stats = st.session_state.feedback_system.get_feedback_stats()
-            col_c, col_d = st.columns(2)
-            with col_c:
-                st.metric("Total Feedback", feedback_stats.get("total_submissions", 0))
-            with col_d:
-                st.metric("Avg Confidence", f"{feedback_stats.get('avg_confidence', 0):.1f}/5")
+        with col1:
+            st.header("📝 Content Input")
             
-            # Show feedback breakdown
-            if feedback_stats.get("by_type"):
-                st.write("**Feedback Types:**")
-                for feedback_type, count in feedback_stats["by_type"].items():
-                    st.write(f"• {feedback_type.replace('_', ' ').title()}: {count}")
-        else:
-            st.info("Feedback system initializing...")
-    
-    # Handle button actions
-    if clear_button:
-        st.rerun()
-    
-    if debug_button:
-        test_ollama_connection()
-    
-    # Jetstream button handlers
-    if live_stream_button:
-        try:
-            start_jetstream_monitoring()
-            st.success("🔴 Jetstream started! Posts will appear in the queue.")
-            # Force a rerun to update the connection status immediately
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to start Jetstream: {e}")
-    
-    if stop_stream_button:
-        try:
-            stop_jetstream_monitoring()
-            st.info("⏹️ Jetstream stopped.")
-            # Force a rerun to update the connection status immediately
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to stop Jetstream: {e}")
-    
-    if live_demo_button:
-        st.divider()
-        st.header("📡 Live AT Protocol Data Moderation")
+            # Text input
+            user_input = st.text_area(
+                "Enter content to moderate:",
+                height=150,
+                placeholder="Type or paste user-generated content here..."
+            )
+            
+            # Buttons
+            button_col1, button_col2, button_col3 = st.columns(3)
+            
+            with button_col1:
+                analyze_button = st.button("🔍 Analyze Post", type="primary", use_container_width=True)
+            
+            with button_col2:
+                demo_button = st.button("🎲 Run Demo (10 posts)", use_container_width=True)
+            
+            with button_col3:
+                clear_button = st.button("🗑️ Clear", use_container_width=True)
+            
+            # Jetstream data buttons  
+            live_col1, live_col2, live_col3 = st.columns(3)
+            
+            with live_col1:
+                live_stream_button = st.button("🔴 Start Jetstream", use_container_width=True)
+            
+            with live_col2:
+                live_demo_button = st.button("📡 Moderate Live Posts", use_container_width=True)
+            
+            with live_col3:
+                stop_stream_button = st.button("⏹️ Stop Jetstream", use_container_width=True)
+            
+            # Add debug button
+            debug_button = st.button("🔧 Debug Connection", use_container_width=True)
         
-        # Get live posts from queue
-        live_posts = get_live_posts(10)
-        
-        if not live_posts:
-            if not st.session_state.get("jetstream_connected", False):
-                st.warning("⚠️ Not connected to Jetstream. Click 'Start Jetstream' first.")
+        with col2:
+            st.header("📡 Live Data & Controls")
+            
+            # Initialize Jetstream state
+            initialize_jetstream_state()
+            
+            st.markdown("**Connection Status:**")
+            
+            # Initialize agentic labeler
+            if "agentic_labeler" not in st.session_state:
+                st.session_state.agentic_labeler = create_demo_labeler(dry_run=True)
+                st.session_state.agentic_moderator = AgenticModerator(st.session_state.agentic_labeler)
+                st.session_state.agentic_enabled = False
+            
+            # Initialize feedback system
+            if "feedback_system" not in st.session_state:
+                st.session_state.feedback_system = FeedbackSystem()
+                st.session_state.feedback_analyzer = FeedbackAnalyzer(st.session_state.feedback_system)
+            
+            # Initialize guidelines manager
+            if "guidelines_manager" not in st.session_state:
+                st.session_state.guidelines_manager = GuidelinesManager()
+            
+            # Display connection status with more detail
+            is_connected = st.session_state.get("jetstream_connected", False)
+            has_client = st.session_state.get("jetstream_client") is not None
+            
+            if is_connected and has_client:
+                st.success("🟢 Connected to Jetstream")
+                st.caption("Receiving live AT Protocol posts")
+            elif has_client and not is_connected:
+                st.warning("🟡 Jetstream client running but not connected")
+                st.caption("Client exists but connection lost")
             else:
-                st.info("🔄 No new posts available. Posts are coming in real-time - try again in a moment.")
-        else:
-            st.success(f"🎯 Processing {len(live_posts)} live posts from AT Protocol")
+                st.error("🔴 Not connected to Jetstream")
+                st.caption("Click 'Start Jetstream' to begin streaming")
             
-            # Create a progress bar
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+            # Live stream metrics - always show
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                st.metric("Live Posts", st.session_state.get("total_live_posts", 0))
+            with col_m2:
+                queue_size = st.session_state.jetstream_queue.qsize() if "jetstream_queue" in st.session_state else 0
+                st.metric("Queue", queue_size)
             
-            # Process each live post
-            for i, post_data in enumerate(live_posts):
-                status_text.text(f"Processing live post {i+1} of {len(live_posts)}...")
-                progress_bar.progress((i + 1) / len(live_posts))
-                
-                post_text = post_data.get("text", "")
-                author_did = post_data.get("author_did", "unknown")
-                created_at = post_data.get("created_at", "")
-                
-                with st.expander(f"Live Post {i+1}: {post_text[:50]}...", expanded=(i==0)):
-                    col_a, col_b = st.columns([3, 1])
-                    
-                    with col_a:
-                        st.markdown("**Live AT Protocol Post:**")
-                        st.write(post_text)
-                    
-                    with col_b:
-                        st.markdown("**Author DID:**")
-                        st.code(author_did[-20:] + "..." if len(author_did) > 20 else author_did)
-                        st.markdown("**Created:**")
-                        st.write(created_at[:19] if created_at else "Unknown")
-                    
-                    with st.spinner("Moderating live post..."):
-                        # Create AT URI for live post
-                        post_uri = f"at://{author_did}/app.bsky.feed.post/{post_data.get('uri', 'unknown')}"
-                        
-                        moderation_result = moderate_post(post_text, post_uri)
-                        
-                        # Process with agentic labeling if enabled
-                        enhanced_result = process_with_agentic_labeling(moderation_result, post_uri)
-                        
-                        # Update stats
-                        st.session_state.total_moderated += 1
-                        if enhanced_result["classification"] == "Allowed":
-                            st.session_state.allowed_count += 1
-                        elif enhanced_result["classification"] == "Flagged":
-                            st.session_state.flagged_count += 1
-                        elif enhanced_result["classification"] == "Needs Human Review":
-                            st.session_state.review_count += 1
-                        
-                        display_moderation_result(enhanced_result, post_text, post_uri)
-                
-                # Small delay to prevent overwhelming the API
-                time.sleep(0.5)
+            # Auto-refresh when Jetstream is connected
+            if st.session_state.get("jetstream_connected", False):
+                # Add auto-refresh every 2 seconds when streaming
+                if st.button("🔄 Refresh Metrics", key="refresh_metrics"):
+                    st.rerun()
+                st.caption("Metrics auto-refresh when streaming is active")
+                # Force a rerun every few seconds when connected
+                if "last_refresh" not in st.session_state:
+                    st.session_state.last_refresh = time.time()
+                elif time.time() - st.session_state.last_refresh > 3:  # Refresh every 3 seconds
+                    st.session_state.last_refresh = time.time()
+                    st.rerun()
+            else:
+                # Manual refresh when not streaming
+                if st.button("🔄 Refresh Metrics", key="refresh_metrics_manual"):
+                    st.rerun()
             
-            status_text.text("✅ Live post moderation complete!")
-            st.balloons()
+            # Advanced features in compact form
+            st.divider()
+            st.markdown("**Advanced Features:**")
+            
+            # Agentic labeling - compact
+            agentic_enabled = st.checkbox(
+                "🤖 Auto-label flagged content", 
+                value=st.session_state.get("agentic_enabled", False)
+            )
+            st.session_state.agentic_enabled = agentic_enabled
+            
+            # Compact stats display
+            with st.expander("📊 System Stats", expanded=False):
+                # Agentic stats
+                if "agentic_labeler" in st.session_state:
+                    stats = st.session_state.agentic_labeler.get_stats()
+                    st.write(f"**Labels Assigned:** {stats.get('labels_assigned', 0)}")
+                    st.write(f"**Pending Review:** {stats.get('labels_queued_for_review', 0)}")
+                
+                # Feedback stats
+                if "feedback_system" in st.session_state:
+                    feedback_stats = st.session_state.feedback_system.get_feedback_stats()
+                    st.write(f"**Total Feedback:** {feedback_stats.get('total_submissions', 0)}")
+                    if feedback_stats.get('total_submissions', 0) > 0:
+                        st.write(f"**Avg Confidence:** {feedback_stats.get('avg_confidence', 0):.1f}/5")
+                else:
+                    st.info("System initializing...")
     
-    if analyze_button:
-        if user_input.strip():
-            with st.spinner("🤖 Analyzing content..."):
-                moderation_result = moderate_post(user_input)
-                
-                # Process with agentic labeling if enabled
-                enhanced_result = process_with_agentic_labeling(moderation_result)
-                
-                # Update stats
-                st.session_state.total_moderated += 1
-                if enhanced_result["classification"] == "Allowed":
-                    st.session_state.allowed_count += 1
-                elif enhanced_result["classification"] == "Flagged":
-                    st.session_state.flagged_count += 1
-                elif enhanced_result["classification"] == "Needs Human Review":
-                    st.session_state.review_count += 1
-                
-                st.divider()
-                st.header("🎯 Moderation Result")
-                display_moderation_result(enhanced_result, user_input)
-        else:
-            st.error("Please enter some content to moderate.")
+        # Handle button actions
+        if clear_button:
+            st.rerun()
+        
+        if debug_button:
+            test_ollama_connection()
     
-    if demo_button:
-        st.divider()
-        st.header("🎲 Demo: Moderating Random Posts")
+        # Jetstream button handlers
+        if live_stream_button:
+            try:
+                start_jetstream_monitoring()
+                st.success("🔴 Jetstream started! Posts will appear in the queue.")
+                # Force a rerun to update the connection status immediately
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to start Jetstream: {e}")
         
-        # Load posts from HuggingFace dataset
-        dataset_posts = load_sample_posts()
+        if stop_stream_button:
+            try:
+                stop_jetstream_monitoring()
+                st.info("⏹️ Jetstream stopped.")
+                # Force a rerun to update the connection status immediately
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to stop Jetstream: {e}")
         
-        if not dataset_posts:
-            st.error("❌ No dataset posts available. Please check your internet connection or try the live stream instead.")
-            st.stop()
-        
-        # Select 10 random posts
-        selected_posts = random.sample(dataset_posts, min(10, len(dataset_posts)))
-        
-        # Create a progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Process each post
-        for i, post in enumerate(selected_posts):
-            status_text.text(f"Processing post {i+1} of {len(selected_posts)}...")
-            progress_bar.progress((i + 1) / len(selected_posts))
+        if live_demo_button:
+            st.divider()
+            st.header("📡 Live AT Protocol Data Moderation")
             
-            with st.expander(f"Post {i+1}: {post[:50]}...", expanded=(i==0)):
-                st.markdown("**Original Post:**")
-                st.write(post)
+            # Get live posts from queue
+            live_posts = get_live_posts(10)
+            
+            if not live_posts:
+                if not st.session_state.get("jetstream_connected", False):
+                    st.warning("⚠️ Not connected to Jetstream. Click 'Start Jetstream' first.")
+                else:
+                    st.info("🔄 No new posts available. Posts are coming in real-time - try again in a moment.")
+            else:
+                st.success(f"🎯 Processing {len(live_posts)} live posts from AT Protocol")
                 
-                with st.spinner("Moderating..."):
-                    moderation_result = moderate_post(post)
+                # Create a progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                # Process each live post
+                for i, post_data in enumerate(live_posts):
+                    status_text.text(f"Processing live post {i+1} of {len(live_posts)}...")
+                    progress_bar.progress((i + 1) / len(live_posts))
+                    
+                    post_text = post_data.get("text", "")
+                    author_did = post_data.get("author_did", "unknown")
+                    created_at = post_data.get("created_at", "")
+                    
+                    with st.expander(f"Live Post {i+1}: {post_text[:50]}...", expanded=(i==0)):
+                        col_a, col_b = st.columns([3, 1])
+                        
+                        with col_a:
+                            st.markdown("**Live AT Protocol Post:**")
+                            st.write(post_text)
+                        
+                        with col_b:
+                            st.markdown("**Author DID:**")
+                            st.code(author_did[-20:] + "..." if len(author_did) > 20 else author_did)
+                            st.markdown("**Created:**")
+                            st.write(created_at[:19] if created_at else "Unknown")
+                        
+                        with st.spinner("Moderating live post..."):
+                            # Create AT URI for live post
+                            post_uri = f"at://{author_did}/app.bsky.feed.post/{post_data.get('uri', 'unknown')}"
+                            
+                            moderation_result = moderate_post(post_text, post_uri)
+                            
+                            # Process with agentic labeling if enabled
+                            enhanced_result = process_with_agentic_labeling(moderation_result, post_uri)
+                            
+                            # Update stats
+                            st.session_state.total_moderated += 1
+                            if enhanced_result["classification"] == "Allowed":
+                                st.session_state.allowed_count += 1
+                            elif enhanced_result["classification"] == "Flagged":
+                                st.session_state.flagged_count += 1
+                            elif enhanced_result["classification"] == "Needs Human Review":
+                                st.session_state.review_count += 1
+                            
+                            display_moderation_result(enhanced_result, post_text, post_uri)
+                    
+                    # Small delay to prevent overwhelming the API
+                    time.sleep(0.5)
+                
+                status_text.text("✅ Live post moderation complete!")
+                st.balloons()
+        
+        if analyze_button:
+            if user_input.strip():
+                with st.spinner("🤖 Analyzing content..."):
+                    moderation_result = moderate_post(user_input)
                     
                     # Process with agentic labeling if enabled
                     enhanced_result = process_with_agentic_labeling(moderation_result)
@@ -1002,13 +1214,61 @@ def main():
                     elif enhanced_result["classification"] == "Needs Human Review":
                         st.session_state.review_count += 1
                     
-                    display_moderation_result(enhanced_result, post)
-            
-            # Small delay to prevent overwhelming the API
-            time.sleep(0.5)
+                    st.divider()
+                    st.header("🎯 Moderation Result")
+                    display_moderation_result(enhanced_result, user_input)
+            else:
+                st.error("Please enter some content to moderate.")
         
-        status_text.text("✅ Demo complete!")
-        st.balloons()
+        if demo_button:
+            st.divider()
+            st.header("🎲 Demo: Moderating Random Posts")
+            
+            # Load posts from HuggingFace dataset
+            dataset_posts = load_sample_posts()
+            
+            if not dataset_posts:
+                st.error("❌ No dataset posts available. Please check your internet connection or try the live stream instead.")
+                st.stop()
+            
+            # Select 10 random posts
+            selected_posts = random.sample(dataset_posts, min(10, len(dataset_posts)))
+            
+            # Create a progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            # Process each post
+            for i, post in enumerate(selected_posts):
+                status_text.text(f"Processing post {i+1} of {len(selected_posts)}...")
+                progress_bar.progress((i + 1) / len(selected_posts))
+                
+                with st.expander(f"Post {i+1}: {post[:50]}...", expanded=(i==0)):
+                    st.markdown("**Original Post:**")
+                    st.write(post)
+                    
+                    with st.spinner("Moderating..."):
+                        moderation_result = moderate_post(post)
+                        
+                        # Process with agentic labeling if enabled
+                        enhanced_result = process_with_agentic_labeling(moderation_result)
+                        
+                        # Update stats
+                        st.session_state.total_moderated += 1
+                        if enhanced_result["classification"] == "Allowed":
+                            st.session_state.allowed_count += 1
+                        elif enhanced_result["classification"] == "Flagged":
+                            st.session_state.flagged_count += 1
+                        elif enhanced_result["classification"] == "Needs Human Review":
+                            st.session_state.review_count += 1
+                        
+                        display_moderation_result(enhanced_result, post)
+                
+                # Small delay to prevent overwhelming the API
+                time.sleep(0.5)
+            
+            status_text.text("✅ Demo complete!")
+            st.balloons()
     
     # Feedback Analytics Section
     if st.session_state.get("feedback_system") and st.session_state.feedback_system.get_feedback_stats()["total_submissions"] > 0:
