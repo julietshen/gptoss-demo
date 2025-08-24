@@ -1,7 +1,7 @@
 # gptoss-demo
 a quick and dirty claude-coded open-source demonstration of AI-powered content moderation using locally-running Large Language Models (LLMs). This project showcases how to build an intelligent moderation system that can classify user-generated content, identify policy violations, and provide transparent reasoning for its decisions.
 
-**🆕 NEW**: Now with **live AT Protocol integration** via Jetstream! Moderate real-time Bluesky posts as they happen.
+**🆕 NEW**: Now with **live AT Protocol integration** via Jetstream! Moderate real-time AT Protocol posts as they happen.
 
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
@@ -12,11 +12,11 @@ a quick and dirty claude-coded open-source demonstration of AI-powered content m
 
 ## Overview
 
-This demo application uses **GPT-OSS** running locally via **Ollama** to moderate user-generated content based on community guidelines. Now enhanced with **live AT Protocol integration** via Jetstream to process real-time Bluesky posts. Developed and tested on a 32GB 2021 MacBook Pro.
+This demo application uses **GPT-OSS** running locally via **Ollama** to moderate user-generated content based on community guidelines. Now enhanced with **live AT Protocol integration** via Jetstream to process real-time AT Protocol posts. Developed and tested on a 32GB 2021 MacBook Pro.
 
 ### Core Capabilities
 - **Real-time content classification** (Allowed / Flagged / Needs Human Review)
-- **Live AT Protocol streaming** - Connect to Bluesky's real-time data feed
+- **Live AT Protocol streaming** - Connect to AT Protocol's real-time data feed
 - **Policy violation detection** with specific categories
 - **Chain-of-thought reasoning** for transparent decision-making
 - **Draft responses** for borderline cases requiring human review
@@ -31,7 +31,7 @@ This demo application uses **GPT-OSS** running locally via **Ollama** to moderat
 
 ### Functionality
 - **Local LLM Integration** - Runs entirely on your machine, no external API calls
-- **Live AT Protocol Streaming** - Real-time connection to Bluesky's data feed via Jetstream
+- **Live AT Protocol Streaming** - Real-time connection to AT Protocol's data feed via Jetstream
 - **Interactive UI** - Clean Streamlit interface for easy testing
 - **Batch Demo Mode** - Process multiple posts automatically
 - **Live Moderation Mode** - Process real-time social media posts as they happen
@@ -126,7 +126,7 @@ The app will open in your browser at `http://localhost:8501`
    - Review results in expandable sections
 
 3. **🆕 Live AT Protocol Moderation:**
-   - Click "Start Live Stream" to connect to Bluesky's real-time data
+   - Click "Start Live Stream" to connect to AT Protocol's real-time data
    - Click "Moderate Live Posts" to process real-time posts
    - Watch live posts get moderated as they happen on the network
    - Monitor connection status and post queue in the sidebar
@@ -155,8 +155,7 @@ This will connect to Jetstream and display live posts as they come in, helping v
          │                      │
          │              ┌───────▼────────┐
          │              │ AT Protocol    │
-         │              │ Live Stream    │
-         │              │ (Bluesky)      │
+         │              │ Live Stream    ││
          │              └───────┬────────┘
          │                      │
          ▼                      ▼
@@ -207,7 +206,7 @@ trust-safety-demo/
 5. **UI Display**: Results shown with appropriate visual indicators
 
 ### 🆕 Live AT Protocol Mode
-1. **Stream Connection**: WebSocket connects to Jetstream (Bluesky's real-time AT Protocol feed)
+1. **Stream Connection**: WebSocket connects to Jetstream (real-time AT Protocol feed)
 2. **Data Filtering**: Incoming messages filtered for `app.bsky.feed.post` (text posts)
 3. **Queue Management**: Posts buffered in a thread-safe queue for processing
 4. **Real-time Moderation**: Live posts processed through the same GPT-OSS pipeline
@@ -307,6 +306,7 @@ This is a **demonstration system** for educational purposes. Production content 
 - OpenAI for GPT-OSS model
 - Ollama team for local LLM infrastructure
 - Streamlit for the UI framework
-- Bluesky team for community guidelines inspiration and Jetstream AT Protocol infrastructure
+- Bluesky team for community guidelines inspiration and 
+- Jaz for the Jetstream AT Protocol infrastructure
 - Alim Maasoglu for curating and collecting the Bluesky data
 - AT Protocol team for the decentralized social networking specification
